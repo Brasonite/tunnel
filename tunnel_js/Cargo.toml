@@ -1,0 +1,9 @@
+[package]
+name = "tunnel_js"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tunnel = { path = "../" }
+wasm-bindgen = "0.2.106"
+wasm-bindgen-futures = "0.4.56"
