@@ -120,7 +120,7 @@ impl Tunnel {
 }
 
 #[pymodule]
-mod tunnel {
+mod pytunnel {
     #[pymodule_export]
     use super::PublicKey;
     use super::Tunnel;
