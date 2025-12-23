@@ -3,12 +3,14 @@ use std::{fmt::Debug, sync::Arc};
 use anyhow::{Result, anyhow};
 use dashmap::DashMap;
 use iroh::{
-    Endpoint, PublicKey,
+    Endpoint,
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
 };
 
 pub const ALPN: &[u8] = b"brasonite/tunnel/v1";
+
+pub type PublicKey = iroh::PublicKey;
 
 /// A trait implemented for objects which can handle incoming data from a tunnel.
 ///
@@ -133,13 +135,14 @@ impl Tunnel {
 
     /// Closes both the sender and the receiver endpoint and consumes this object.
     ///
-    /// Ideally, this should be called before the execution of the program ends.
+    /// Ideally, this should be called before the execution of the program ends
+    /// or before a tunnel is discarded.
     pub async fn destroy(self) {
         self.sender.close().await;
         self.receiver.shutdown().await.unwrap();
     }
 
-    /// Closes a connection to another tunnel.
+    /// Closes a connection to another tunnel, if it exists.
     pub fn close(&self, address: PublicKey) {
         self.connections
             .remove(&address)
