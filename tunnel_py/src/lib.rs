@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use ::tunnel::{PublicKey as NativePublicKey, Tunnel as NativeTunnel};
 use pollster::FutureExt;
-use pyo3::{create_exception, exceptions::PyException, prelude::*, types::PyFunction};
+use pyo3::{create_exception, exceptions::PyException, prelude::*};
 
 create_exception!(tunnel, PublicKeyParseError, PyException);
 create_exception!(tunnel, TunnelCreationError, PyException);
@@ -40,7 +40,7 @@ pub struct Tunnel {
 #[pymethods]
 impl Tunnel {
     #[new]
-    fn new(handler: Py<PyFunction>) -> PyResult<Self> {
+    fn new(handler: Py<PyAny>) -> PyResult<Self> {
         let inner = NativeTunnel::new(move |sender: NativePublicKey, data: Vec<u8>| {
             Python::attach(|py| handler.call(py, (PublicKey(sender), data), None)).unwrap();
         })
