@@ -1,6 +1,7 @@
-use std::{str::FromStr, sync::mpsc::channel};
+use std::str::FromStr;
 
 use ::tunnel::{PublicKey as NativePublicKey, Tunnel as NativeTunnel};
+use futures::{SinkExt, StreamExt, channel::mpsc::channel};
 use js_sys::{Function, Uint8Array};
 use wasm_bindgen::prelude::*;
 
@@ -30,16 +31,19 @@ pub struct Tunnel(NativeTunnel);
 impl Tunnel {
     /// Creates a new tunnel using the provided callback.
     pub async fn new(handler: Function) -> Result<Self, JsError> {
-        let (tx, rx) = channel::<DataEvent>();
+        let (tx, mut rx) = channel::<DataEvent>(32);
 
         let inner = NativeTunnel::new(move |sender: NativePublicKey, data: Vec<u8>| {
-            tx.send(DataEvent { sender, data }).unwrap();
+            let mut tx_clone = tx.clone();
+            wasm_bindgen_futures::spawn_local(async move {
+                tx_clone.send(DataEvent { sender, data }).await.unwrap();
+            });
         })
         .await
         .map_err(|e| JsError::new(&e.to_string()))?;
 
         wasm_bindgen_futures::spawn_local(async move {
-            while let Ok(event) = rx.recv() {
+            while let Some(event) = rx.next().await {
                 handler
                     .call2(
                         &JsValue::null(),

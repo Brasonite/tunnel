@@ -7,6 +7,7 @@ use iroh::{
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
 };
+use tokio::sync::RwLock;
 
 pub const ALPN: &[u8] = b"brasonite/tunnel/v1";
 
@@ -18,20 +19,20 @@ pub type PublicKey = iroh::PublicKey;
 /// such, any function which takes a [PublicKey] and a `Vec<u8>` in this order
 /// can be used as a [DataHandler].
 pub trait DataHandler: 'static + Send + Sync {
-    fn process_incoming_data(&self, sender: PublicKey, data: Vec<u8>);
+    fn process_incoming_data(&mut self, sender: PublicKey, data: Vec<u8>);
 }
 
 impl<Func> DataHandler for Func
 where
-    Func: 'static + Send + Sync + Fn(PublicKey, Vec<u8>) -> (),
+    Func: 'static + Send + Sync + FnMut(PublicKey, Vec<u8>) -> (),
 {
-    fn process_incoming_data(&self, sender: PublicKey, data: Vec<u8>) {
+    fn process_incoming_data(&mut self, sender: PublicKey, data: Vec<u8>) {
         self(sender, data)
     }
 }
 
 pub struct TunnelProtocol {
-    pub handler: Option<Arc<dyn DataHandler>>,
+    pub handler: Option<Arc<RwLock<dyn DataHandler>>>,
 }
 
 impl TunnelProtocol {
@@ -39,7 +40,7 @@ impl TunnelProtocol {
         Self { handler: None }
     }
 
-    pub fn with_handler(mut self, handler: Arc<dyn DataHandler>) -> Self {
+    pub fn with_handler(mut self, handler: Arc<RwLock<dyn DataHandler>>) -> Self {
         self.handler = Some(handler);
         self
     }
@@ -47,8 +48,8 @@ impl TunnelProtocol {
 
 impl ProtocolHandler for TunnelProtocol {
     async fn accept(&self, connection: Connection) -> std::result::Result<(), AcceptError> {
-        let handler = match &self.handler {
-            Some(handler) => handler,
+        let mut handler = match &self.handler {
+            Some(handler) => handler.write().await,
             None => return Ok(()),
         };
 
@@ -82,7 +83,7 @@ impl Tunnel {
         let sender = Endpoint::bind().await?;
         let receiver_endpoint = Endpoint::bind().await?;
 
-        let protocol = Arc::new(TunnelProtocol::new().with_handler(Arc::new(handler)));
+        let protocol = Arc::new(TunnelProtocol::new().with_handler(Arc::new(RwLock::new(handler))));
 
         let receiver = Router::builder(receiver_endpoint)
             .accept(ALPN, Arc::clone(&protocol))

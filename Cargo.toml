@@ -7,9 +7,9 @@ edition = "2024"
 anyhow = { workspace = true }
 dashmap = "6.1.0"
 iroh = "0.95.1"
+tokio = { workspace = true }
 
 [dev-dependencies]
-tokio = { workspace = true }
 
 [workspace]
 members = ["tunnel_js", "tunnel_py"]
