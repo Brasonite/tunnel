@@ -1,15 +1,25 @@
 use std::str::FromStr;
 
 use ::tunnel::{PublicKey as NativePublicKey, Tunnel as NativeTunnel};
-use pollster::FutureExt;
-use pyo3::{create_exception, exceptions::PyException, prelude::*};
+use pyo3::{
+    create_exception,
+    exceptions::{PyException, PyValueError},
+    prelude::*,
+    sync::PyOnceLock,
+};
+use tokio::runtime::Runtime;
 
+static PID: PyOnceLock<u32> = PyOnceLock::new();
+static RUNTIME: PyOnceLock<Runtime> = PyOnceLock::new();
+
+create_exception!(tunnel, RuntimeMissingError, PyException);
 create_exception!(tunnel, PublicKeyParseError, PyException);
 create_exception!(tunnel, TunnelCreationError, PyException);
 create_exception!(tunnel, TunnelDestroyedError, PyException);
 create_exception!(tunnel, TunnelSendingError, PyException);
 
-const TUNNEL_DESTROYED_MSG: &str = "This tunnel has been destroyed.";
+const RUNTIME_MISSING_MSG: &str = "No initialized Tokio runtime found.";
+const TUNNEL_DESTROYED_MSG: &str = "This tunnel was previously destroyed.";
 
 #[pyclass]
 pub struct PublicKey(NativePublicKey);
@@ -40,17 +50,19 @@ pub struct Tunnel {
 #[pymethods]
 impl Tunnel {
     #[new]
-    fn new(handler: Py<PyAny>) -> PyResult<Self> {
-        let inner = NativeTunnel::new(move |sender: NativePublicKey, data: Vec<u8>| {
-            Python::attach(|py| handler.call(py, (PublicKey(sender), data), None)).unwrap();
-        })
-        .block_on()
-        .map_err(|e| TunnelCreationError::new_err(e.to_string()))?;
+    fn new(py: Python, handler: Py<PyAny>) -> PyResult<Self> {
+        let inner = runtime(py)?
+            .block_on(NativeTunnel::new(
+                move |sender: NativePublicKey, data: Vec<u8>| {
+                    Python::attach(|py| handler.call(py, (PublicKey(sender), data), None)).unwrap();
+                },
+            ))
+            .map_err(|e| TunnelCreationError::new_err(e.to_string()))?;
 
         Ok(Self { inner: Some(inner) })
     }
 
-    fn send(&self, address: &PublicKey, data: &[u8]) -> PyResult<()> {
+    fn send(&self, py: Python, address: &PublicKey, data: &[u8]) -> PyResult<()> {
         let inner = match self.inner.as_ref() {
             Some(inner) => inner,
             None => {
@@ -58,15 +70,17 @@ impl Tunnel {
             }
         };
 
-        inner
-            .send(address.0, data)
-            .block_on()
+        runtime(py)?
+            .block_on(inner.send(address.0, data))
             .map_err(|e| TunnelSendingError::new_err(e.to_string()))
     }
 
-    fn destroy(&mut self) {
+    fn destroy(&mut self, py: Python) -> PyResult<()> {
         if let Some(inner) = self.inner.take() {
-            inner.destroy().block_on();
+            runtime(py)?.block_on(inner.destroy());
+            Ok(())
+        } else {
+            Err(TunnelDestroyedError::new_err(TUNNEL_DESTROYED_MSG))
         }
     }
 
@@ -119,9 +133,35 @@ impl Tunnel {
     }
 }
 
+fn create_tokio_runtime(py: Python) -> PyResult<()> {
+    let pid = std::process::id();
+    let runtime_pid = *PID.get_or_init(py, || pid);
+
+    if pid != runtime_pid {
+        panic!("Attempted to create a new Tokio runtime using a different process.");
+    }
+
+    let _ = RUNTIME.set(
+        py,
+        Runtime::new()
+            .map_err(|e| PyValueError::new_err(format!("Could not create Tokio runtime: {e}")))?,
+    );
+
+    Ok(())
+}
+
+fn runtime<'py>(py: Python<'py>) -> PyResult<&'py Runtime> {
+    RUNTIME
+        .get(py)
+        .ok_or(RuntimeMissingError::new_err(RUNTIME_MISSING_MSG))
+}
+
 #[pymodule]
-mod pytunnel {
-    #[pymodule_export]
-    use super::PublicKey;
-    use super::Tunnel;
+fn pytunnel(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    create_tokio_runtime(m.py())?;
+
+    m.add_class::<PublicKey>()?;
+    m.add_class::<Tunnel>()?;
+
+    Ok(())
 }

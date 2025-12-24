@@ -9,10 +9,11 @@ dashmap = "6.1.0"
 iroh = "0.95.1"
 
 [dev-dependencies]
-tokio = "1.48.0"
+tokio = { workspace = true }
 
 [workspace]
 members = ["tunnel_js", "tunnel_py"]
 
 [workspace.dependencies]
+tokio = "1.48.0"
 anyhow = "1.0.100"
